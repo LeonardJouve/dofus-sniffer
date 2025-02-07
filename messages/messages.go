@@ -1156,4 +1156,8 @@ var KnownMessages map[string]protoreflect.MessageType = map[string]protoreflect.
 	"type.ankama.com/igu": (&fight.FightMapInformationResponse{}).ProtoReflect().Type(),
 	"type.ankama.com/igg": (&gamemap.MapMovementEvent{}).ProtoReflect().Type(),
 	"type.ankama.com/iyc": (&chat.ChatChannelMessageEvent{}).ProtoReflect().Type(),
+	"type.ankama.com/jrg": (&arena.ArenaRegisterRequest{}).ProtoReflect().Type(),
+	"type.ankama.com/jrh": (&arena.ArenaUnregisterRequest{}).ProtoReflect().Type(),
+	"type.ankama.com/hlr": (&quest.QuestObjectiveUnfollowRequest{}).ProtoReflect().Type(),
+	"type.ankama.com/hlq": (&quest.QuestObjectiveFollowRequest{}).ProtoReflect().Type(),
 }

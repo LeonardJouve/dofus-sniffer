@@ -10,6 +10,7 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcap"
 
+	"dofus-sniffer/messages"
 	"dofus-sniffer/proto/connection/connection_message"
 	"dofus-sniffer/proto/game/game_message"
 
@@ -143,8 +144,6 @@ func handleConnectionMessage(payload []byte, size uint64, gameServerIp *net.IP) 
 }
 
 func handleGameMessage(payload []byte, size uint64) {
-	fmt.Printf("[Game] Received %d bytes\n", size)
-
 	message, ok := reflect.New(reflect.TypeOf(&game_message.Message{}).Elem()).Interface().(proto.Message)
 	if !ok {
 		return
@@ -172,5 +171,11 @@ func handleGameMessage(payload []byte, size uint64) {
 		return
 	}
 
-	fmt.Printf("%s: %x\n", any.GetTypeUrl(), payload)
+	messageType, ok := messages.KnownMessages[any.GetTypeUrl()]
+	if !ok {
+		fmt.Printf("[Game] Received %d bytes unknown type %s: %x\n", size, any.GetTypeUrl(), payload)
+	} else {
+		fmt.Printf("[Game] Received %d bytes %s\n", size, messageType.Descriptor().Name())
+	}
+
 }
