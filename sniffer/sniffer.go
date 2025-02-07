@@ -10,14 +10,17 @@ import (
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/pcap"
 
-	"dofus-sniffer/proto/connection/connection"
-	game "dofus-sniffer/proto/game/message"
+	"dofus-sniffer/proto/connection/connection_message"
+	"dofus-sniffer/proto/game/game_message"
 
 	"github.com/google/gopacket/layers"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 )
 
 type Handler = func(packet gopacket.Packet)
+
+const CONNECTION_SERVER = "dofus2-co-production.ankama-games.com"
 
 func Listen(device string, filter string, handle Handler) {
 	pcapHandle, err := pcap.OpenLive(device, 1600, true, pcap.BlockForever)
@@ -38,9 +41,6 @@ func Listen(device string, filter string, handle Handler) {
 		handle(packet)
 	}
 }
-
-const CONNECTION_SERVER = "dofus2-co-production.ankama-games.com"
-
 func MakeHandler() (Handler, error) {
 	fragmentBuffer := make(map[string][]byte)
 	connectionServer, err := net.LookupIP(CONNECTION_SERVER)
@@ -73,36 +73,36 @@ func MakeHandler() (Handler, error) {
 			return
 		}
 
-		fragmentBuffer[string(ip.SrcIP)] = append(fragmentBuffer[string(ip.SrcIP)], tcp.Payload...)
+		fragmentBuffer[ip.SrcIP.String()] = append(fragmentBuffer[ip.SrcIP.String()], tcp.Payload...)
 
 		for {
-			size, sizeLength := binary.Uvarint(fragmentBuffer[string(ip.SrcIP)])
-			if sizeLength <= 0 || uint64(len(fragmentBuffer[string(ip.SrcIP)])-sizeLength) < size {
+			size, sizeLength := binary.Uvarint(fragmentBuffer[ip.SrcIP.String()])
+			if sizeLength <= 0 || uint64(len(fragmentBuffer[ip.SrcIP.String()])-sizeLength) < size {
 				break
 			}
 
-			payload := fragmentBuffer[string(ip.SrcIP)][sizeLength : size+uint64(sizeLength)]
+			payload := fragmentBuffer[ip.SrcIP.String()][sizeLength : size+uint64(sizeLength)]
 
 			switch true {
 			case ip.SrcIP.Equal(connectionServerIp):
-				handleConnectionServerMessage(payload, size, &gameServerIp)
+				fallthrough
 			case ip.DstIP.Equal(connectionServerIp):
-				handleConnectionClientMessage(payload, size)
+				handleConnectionMessage(payload, size, &gameServerIp)
 			case ip.SrcIP.Equal(gameServerIp):
-				handleGameServerMessage(payload, size)
+				fallthrough
 			case ip.DstIP.Equal(gameServerIp):
-				handleGameClientMessage(payload, size)
+				handleGameMessage(payload, size)
 			}
 
-			fragmentBuffer[string(ip.SrcIP)] = fragmentBuffer[string(ip.SrcIP)][uint64(sizeLength)+size:]
+			fragmentBuffer[ip.SrcIP.String()] = fragmentBuffer[ip.SrcIP.String()][uint64(sizeLength)+size:]
 		}
 	}, nil
 }
 
-func handleConnectionServerMessage(payload []byte, size uint64, gameServerIp *net.IP) {
-	fmt.Printf("[Connection S -> C] Received %d bytes\n", size)
+func handleConnectionMessage(payload []byte, size uint64, gameServerIp *net.IP) {
+	fmt.Printf("[Connection] Received %d bytes\n", size)
 
-	message, ok := reflect.New(reflect.TypeOf(&connection.Message{}).Elem()).Interface().(proto.Message)
+	message, ok := reflect.New(reflect.TypeOf(&connection_message.Message{}).Elem()).Interface().(proto.Message)
 	if !ok {
 		return
 	}
@@ -112,24 +112,24 @@ func handleConnectionServerMessage(payload []byte, size uint64, gameServerIp *ne
 		return
 	}
 
-	connectionMessage, ok := message.(*connection.Message)
+	connectionMessage, ok := message.(*connection_message.Message)
 	if !ok {
 		return
 	}
 
-	_, ok = connectionMessage.Content.(*connection.Message_Response)
+	_, ok = connectionMessage.Content.(*connection_message.Message_Response)
 	if !ok {
 		return
 	}
 	response := connectionMessage.GetResponse()
 
-	_, ok = response.Content.(*connection.Response_SelectServer)
+	_, ok = response.Content.(*connection_message.Response_SelectServer)
 	if !ok {
 		return
 	}
 	selectServer := response.GetSelectServer()
 
-	_, ok = selectServer.Result.(*connection.SelectServerResponse_Success_)
+	_, ok = selectServer.Result.(*connection_message.SelectServerResponse_Success_)
 	if !ok {
 		return
 	}
@@ -142,10 +142,10 @@ func handleConnectionServerMessage(payload []byte, size uint64, gameServerIp *ne
 	*gameServerIp = gameServer[0]
 }
 
-func handleConnectionClientMessage(payload []byte, size uint64) {
-	fmt.Printf("[Connection C -> S] Received %d bytes\n", size)
+func handleGameMessage(payload []byte, size uint64) {
+	fmt.Printf("[Game] Received %d bytes\n", size)
 
-	message, ok := reflect.New(reflect.TypeOf(&connection.Message{}).Elem()).Interface().(proto.Message)
+	message, ok := reflect.New(reflect.TypeOf(&game_message.Message{}).Elem()).Interface().(proto.Message)
 	if !ok {
 		return
 	}
@@ -154,32 +154,23 @@ func handleConnectionClientMessage(payload []byte, size uint64) {
 	if err != nil {
 		return
 	}
-}
 
-func handleGameServerMessage(payload []byte, size uint64) {
-	fmt.Printf("[Game S -> C] Received %d bytes\n", size)
-
-	message, ok := reflect.New(reflect.TypeOf(&game.Message{}).Elem()).Interface().(proto.Message)
+	gameMessage, ok := message.(*game_message.Message)
 	if !ok {
 		return
 	}
 
-	err := proto.Unmarshal(payload, message)
-	if err != nil {
-		return
-	}
-}
-
-func handleGameClientMessage(payload []byte, size uint64) {
-	fmt.Printf("[Game C -> S] Received %d bytes\n", size)
-
-	message, ok := reflect.New(reflect.TypeOf(&game.Message{}).Elem()).Interface().(proto.Message)
-	if !ok {
+	var any *anypb.Any
+	switch gameMessage.Content.(type) {
+	case *game_message.Message_Request:
+		any = gameMessage.GetRequest().GetContent()
+	case *game_message.Message_Event:
+		any = gameMessage.GetEvent().GetContent()
+	case *game_message.Message_Response:
+		any = gameMessage.GetResponse().Content
+	default:
 		return
 	}
 
-	err := proto.Unmarshal(payload, message)
-	if err != nil {
-		return
-	}
+	fmt.Printf("%s: %x\n", any.GetTypeUrl(), payload)
 }

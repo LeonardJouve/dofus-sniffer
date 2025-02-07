@@ -1,8 +1,6 @@
 package main
 
-import (
-	"dofus-sniffer/sniffer"
-)
+import "dofus-sniffer/sniffer"
 
 func main() {
 	handle, err := sniffer.MakeHandler()
