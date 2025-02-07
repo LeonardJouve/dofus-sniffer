@@ -108,3 +108,10 @@ func TestQuest(t *testing.T) {
 	// QuestObjectiveFollowRequest
 	testMessage(t, "0a3208ffffffffffffffffff0112250a13747970652e616e6b616d612e636f6d2f686c71120e08f60c10ffffffffffffffffff01", "type.ankama.com/hlq")
 }
+
+func TestInventory(t *testing.T) {
+	// ObjectFavoriteRequest
+	testMessage(t, "0a26083f12220a13747970652e616e6b616d612e636f6d2f687961120b0a0708a8aadc4e10061001", "type.ankama.com/hya")
+	// ObjectFavoriteResponse
+	testMessage(t, "121d084a12190a13747970652e616e6b616d612e636f6d2f68797112020801", "type.ankama.com/hyq")
+}

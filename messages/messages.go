@@ -1160,4 +1160,6 @@ var KnownMessages map[string]protoreflect.MessageType = map[string]protoreflect.
 	"type.ankama.com/jrh": (&arena.ArenaUnregisterRequest{}).ProtoReflect().Type(),
 	"type.ankama.com/hlr": (&quest.QuestObjectiveUnfollowRequest{}).ProtoReflect().Type(),
 	"type.ankama.com/hlq": (&quest.QuestObjectiveFollowRequest{}).ProtoReflect().Type(),
+	"type.ankama.com/hya": (&inventory.ObjectFavoriteRequest{}).ProtoReflect().Type(),
+	"type.ankama.com/hyq": (&inventory.ObjectFavoriteResponse{}).ProtoReflect().Type(),
 }
