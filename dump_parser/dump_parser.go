@@ -2,12 +2,15 @@ package main
 
 import (
 	"bufio"
+	"dofus-sniffer/messages"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func main() {
@@ -40,19 +43,19 @@ func main() {
 					continue
 				}
 
-				hasMatched := true
+				isMatch := true
 
 				for i, protoValue := range protoValues {
 					if protoValue != csValues[i] {
-						hasMatched = false
+						isMatch = false
 					}
 				}
 
-				if !hasMatched {
+				if !isMatch {
 					continue
 				}
 
-				fmt.Printf("%s -> %s/%s\n", csEnumName, fileName, protoEnumName)
+				findUsage(fileName, protoEnumName, csEnumName)
 			}
 		}
 	}
@@ -94,3 +97,66 @@ func parseEnums(fileName string, enumRegexp *regexp.Regexp, nameRegexp *regexp.R
 
 	return enumMap
 }
+
+func findUsage(fileName string, protoName string, csName string) {
+	csParts := strings.Split(csName, ".")
+	if len(csParts) < 2 {
+		return
+	}
+
+	csParentName := strings.Join(csParts[:len(csParts)-2], ".")
+	for _, message := range messages.Messages {
+		descriptor := message.New().Interface().ProtoReflect().Descriptor()
+		for protoFieldIndex := range descriptor.Fields().Len() {
+			protoField := descriptor.Fields().Get(protoFieldIndex)
+			var fieldName string
+			switch protoField.Kind() {
+			case protoreflect.EnumKind:
+				fieldName = string(protoField.Enum().Name())
+			case protoreflect.MessageKind:
+				fieldName = string(protoField.Message().Name())
+			}
+
+			if protoName != fieldName {
+				continue
+			}
+
+			if strings.Contains(csParentName, ".") {
+				findUsage(fileName, csParentName, string(descriptor.Name()))
+			} else {
+				fmt.Printf("%s", fmt.Sprintf("\t\"type.ankama.com/%s\": (&%s.%s{}).ProtoReflect().Type(),\n", csParentName, fileName, string(descriptor.Name())))
+			}
+		}
+	}
+}
+
+// func extractProtoMessages() {
+// 	var sb strings.Builder
+// 	filepath.WalkDir("proto", func(path string, d fs.DirEntry, err error) error {
+// 		if err != nil {
+// 			return err
+// 		}
+
+// 		if d.IsDir() || !strings.HasSuffix(path, ".proto") {
+// 			return nil
+// 		}
+
+// 		fileName := strings.Replace(filepath.Base(path), ".proto", "", 1)
+
+// 		content, err := os.ReadFile(path)
+// 		if err != nil {
+// 			return err
+// 		}
+
+// 		lines := strings.Split(string(content), "\n")
+// 		for _, line := range lines {
+// 			if strings.Index(line, "message") == 0 {
+// 				sb.WriteString(fmt.Sprintf("\t(&%s.%s{}).ProtoReflect().Type(),\n", fileName, regexp.MustCompile(`message (\w+)`).FindStringSubmatch(line)[1]))
+// 			}
+// 		}
+
+// 		return nil
+// 	})
+
+// 	os.WriteFile("messages.txt", []byte(sb.String()), 0644)
+// }
