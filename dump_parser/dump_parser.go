@@ -2,15 +2,12 @@ package main
 
 import (
 	"bufio"
-	"dofus-sniffer/messages"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func main() {
@@ -26,9 +23,9 @@ func main() {
 			return nil
 		}
 
-		fileName := strings.Replace(filepath.Base(path), ".proto", "", 1)
+		namespace := strings.Replace(filepath.Base(path), ".proto", "", 1)
 		protoEnums := parseEnums(path, protoEnumRegexp, protoNameRegexp)
-		allProtoEnums[fileName] = protoEnums
+		allProtoEnums[namespace] = protoEnums
 
 		return nil
 	})
@@ -36,8 +33,11 @@ func main() {
 	csNameRegexp := regexp.MustCompile(`\[OriginalName\("([^"]+)"\)\]`)
 	csEnums := parseEnums("dump.cs", csEnumRegexp, csNameRegexp)
 
+	outsideMatches := make(map[string]string)
+	containedMatches := make(map[string]string)
+	potentialMatches := make(map[string][]string)
 	for csEnumName, csValues := range csEnums {
-		for fileName, protoEnums := range allProtoEnums {
+		for namespace, protoEnums := range allProtoEnums {
 			for protoEnumName, protoValues := range protoEnums {
 				if len(csValues) != len(protoValues) {
 					continue
@@ -55,10 +55,22 @@ func main() {
 					continue
 				}
 
-				findUsage(fileName, protoEnumName, csEnumName)
+				name := fmt.Sprintf("%s/%s", namespace, protoEnumName)
+				if _, ok := containedMatches[name]; ok {
+					potentialMatches[name] = append(potentialMatches[name], csEnumName)
+					delete(containedMatches, name)
+				} else if _, ok := potentialMatches[name]; !ok {
+					if strings.Contains(csEnumName, ".") {
+						containedMatches[name] = csEnumName
+					} else {
+						outsideMatches[name] = csEnumName
+					}
+				}
 			}
 		}
 	}
+
+	bindMessagesWithContainedEnum(containedMatches)
 }
 
 func parseEnums(fileName string, enumRegexp *regexp.Regexp, nameRegexp *regexp.Regexp) map[string][]string {
@@ -98,65 +110,100 @@ func parseEnums(fileName string, enumRegexp *regexp.Regexp, nameRegexp *regexp.R
 	return enumMap
 }
 
-func findUsage(fileName string, protoName string, csName string) {
-	csParts := strings.Split(csName, ".")
-	if len(csParts) < 2 {
-		return
-	}
+// func bindMessagesWithOutsideEnum(matches map[string]string) {
+// 	messageNameRegexp := regexp.MustCompile(`message\s+(\w+)\s+{`)
 
-	csParentName := strings.Join(csParts[:len(csParts)-2], ".")
-	for _, message := range messages.Messages {
-		descriptor := message.New().Interface().ProtoReflect().Descriptor()
-		for protoFieldIndex := range descriptor.Fields().Len() {
-			protoField := descriptor.Fields().Get(protoFieldIndex)
-			var fieldName string
-			switch protoField.Kind() {
-			case protoreflect.EnumKind:
-				fieldName = string(protoField.Enum().Name())
-			case protoreflect.MessageKind:
-				fieldName = string(protoField.Message().Name())
-			}
+// 	for match := range matches {
+// 		found := 0
+// 		lastMessage := ""
+// 		filepath.WalkDir("proto", func(path string, d fs.DirEntry, err error) error {
+// 			if err != nil {
+// 				return err
+// 			}
 
-			if protoName != fieldName {
-				continue
-			}
+// 			if d.IsDir() || !strings.HasSuffix(path, ".proto") {
+// 				return nil
+// 			}
 
-			if strings.Contains(csParentName, ".") {
-				findUsage(fileName, csParentName, string(descriptor.Name()))
-			} else {
-				fmt.Printf("%s", fmt.Sprintf("\t\"type.ankama.com/%s\": (&%s.%s{}).ProtoReflect().Type(),\n", csParentName, fileName, string(descriptor.Name())))
+// 			file, err := os.Open(path)
+// 			if err != nil {
+// 				return err
+// 			}
+// 			defer file.Close()
+
+// 			enumFieldRegexp := regexp.MustCompile(match)
+// 			scanner := bufio.NewScanner(file)
+// 			for scanner.Scan() {
+// 				line := scanner.Text()
+// 				switch true {
+// 				case messageNameRegexp.Match([]byte(line)):
+// 					if found == 0 {
+// 						lastMessage = messageNameRegexp.FindStringSubmatch(line)[1]
+// 					}
+// 				case enumFieldRegexp.Match([]byte(line)):
+// 					found += 1
+// 				}
+// 			}
+
+// 			return nil
+// 		})
+
+// 		if found == 1 {
+// 			fmt.Printf("%s", fmt.Sprintf("\t\"type.ankama.com/%s\": (&%s.%s{}).ProtoReflect().Type(),\n", strings.Split(csEnumName, ".")[0], namespace, messageName))
+// 		}
+// 	}
+// }
+
+func bindMessagesWithContainedEnum(matches map[string]string) {
+	messageNameRegexp := regexp.MustCompile(`message\s+(\w+)\s+{`)
+	protoEnumRegexp := regexp.MustCompile(`enum\s+(\w+)\s+{`)
+	filepath.WalkDir("proto", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() || !strings.HasSuffix(path, ".proto") {
+			return nil
+		}
+
+		namespace := strings.Replace(filepath.Base(path), ".proto", "", 1)
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		messageStack := []string{}
+		skip := 0
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			line := scanner.Text()
+			switch true {
+			case messageNameRegexp.Match([]byte(line)):
+				messageStack = append(messageStack, messageNameRegexp.FindStringSubmatch(line)[1])
+			case protoEnumRegexp.Match([]byte(line)):
+				skip += 1
+				csEnumName, ok := matches[fmt.Sprintf("%s/%s", namespace, protoEnumRegexp.FindStringSubmatch(line)[1])]
+				if !ok {
+					break
+				}
+				csEnumNameCount := strings.Count(csEnumName, ".")
+				if csEnumNameCount < 2 || len(messageStack) < csEnumNameCount/2 {
+					break
+				}
+				messageName := messageStack[len(messageStack)-(csEnumNameCount/2)]
+				fmt.Printf("%s", fmt.Sprintf("\t\"type.ankama.com/%s\": (&%s.%s{}).ProtoReflect().Type(),\n", strings.Split(csEnumName, ".")[0], namespace, messageName))
+			case strings.Contains(line, "{"):
+				skip += 1
+			case strings.Contains(line, "}"):
+				if skip > 0 {
+					skip -= 1
+				} else {
+					messageStack = messageStack[:len(messageStack)-1]
+				}
 			}
 		}
-	}
+
+		return nil
+	})
 }
-
-// func extractProtoMessages() {
-// 	var sb strings.Builder
-// 	filepath.WalkDir("proto", func(path string, d fs.DirEntry, err error) error {
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		if d.IsDir() || !strings.HasSuffix(path, ".proto") {
-// 			return nil
-// 		}
-
-// 		fileName := strings.Replace(filepath.Base(path), ".proto", "", 1)
-
-// 		content, err := os.ReadFile(path)
-// 		if err != nil {
-// 			return err
-// 		}
-
-// 		lines := strings.Split(string(content), "\n")
-// 		for _, line := range lines {
-// 			if strings.Index(line, "message") == 0 {
-// 				sb.WriteString(fmt.Sprintf("\t(&%s.%s{}).ProtoReflect().Type(),\n", fileName, regexp.MustCompile(`message (\w+)`).FindStringSubmatch(line)[1]))
-// 			}
-// 		}
-
-// 		return nil
-// 	})
-
-// 	os.WriteFile("messages.txt", []byte(sb.String()), 0644)
-// }
